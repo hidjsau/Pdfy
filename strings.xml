@@ -1,0 +1,14 @@
+<resources>
+	<string name="app_name">Chaka PDF</string>
+	<string name="open_pdf">Open PDF</string>
+	<string name="cancel">Cancel</string>
+	<string name="cannot_open_document">Cannot open document</string>
+	<string name="cannot_open_document_Reason">Cannot open document: %1$s</string>
+	<string name="dismiss">Dismiss</string>
+	<string name="enter_password">Enter password</string>
+	<string name="not_supported">Not supported</string>
+	<string name="okay">Okay</string>
+	<string name="share_text">Share</string>
+	<string name="sharing_text">Sharing text</string>
+	<string name="web_search">Web search</string>
+</resources>

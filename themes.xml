@@ -1,0 +1,12 @@
+<resources>
+	<style name="Theme.ChakaPdf" parent="Theme.AppCompat.Light.NoActionBar">
+		<item name="colorPrimary">#202020</item>
+		<item name="colorPrimaryDark">#202020</item>
+		<item name="colorAccent">#3CB371</item>
+		<item name="android:windowBackground">@android:color/white</item>
+	</style>
+
+	<style name="MyDialog" parent="android:Theme.Material.Light.Dialog.Alert">
+		<item name="android:windowNoTitle">false</item>
+	</style>
+</resources>
