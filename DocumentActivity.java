@@ -7,7 +7,11 @@ import android.content.ContentResolver;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.net.Uri;
+import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.InputType;
@@ -20,6 +24,7 @@ import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ArrayAdapter;
+import android.widget.BaseAdapter;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -36,6 +41,7 @@ import androidx.core.view.WindowInsetsCompat;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -59,6 +65,8 @@ public class DocumentActivity extends AppCompatActivity
 	private ArrayList<MuPDFCore.OutlineItem> outline;
 	private TextView pageIndicator;
 	private TextView contentsButton;
+	private TextView banner;
+	private Runnable hideBannerTask;
 	private OnBackPressedCallback docBackCallback;
 
 	@Override
@@ -195,6 +203,7 @@ public class DocumentActivity extends AppCompatActivity
 		outline = null;
 		pageIndicator = null;
 		contentsButton = null;
+		banner = null;
 		if (docView != null) {
 			docView.getBackCallback().remove();
 			docView = null;
@@ -399,8 +408,24 @@ public class DocumentActivity extends AppCompatActivity
 		clp.rightMargin = dp(12);
 		frame.addView(contentsButton, clp);
 
+		// short notice near the bottom edge (used for the area selection tool)
+		banner = makeOverlay(14, 10);
+		banner.setVisibility(View.GONE);
+		banner.setMaxWidth(dp(340));
+		banner.setGravity(Gravity.CENTER);
+		FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(
+				ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+				Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+		blp.bottomMargin = dp(64);
+		frame.addView(banner, blp);
+
 		ViewCompat.setOnApplyWindowInsetsListener(frame, (v, insets) -> {
 			Insets b = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+			if (banner != null) {
+				FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) banner.getLayoutParams();
+				lp.bottomMargin = b.bottom + dp(64);
+				banner.setLayoutParams(lp);
+			}
 			if (pageIndicator != null) {
 				FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) pageIndicator.getLayoutParams();
 				lp.bottomMargin = b.bottom + dp(12);
@@ -413,6 +438,12 @@ public class DocumentActivity extends AppCompatActivity
 				contentsButton.setLayoutParams(lp);
 			}
 			return insets;
+		});
+
+		docView.setAreaModeListener(active -> {
+			showBanner(getString(active ? R.string.area_on : R.string.area_off));
+			if (pageIndicator != null)   // green page pill = area tool is on
+				((GradientDrawable) pageIndicator.getBackground()).setColor(active ? 0xE63CB371 : 0xB3000000);
 		});
 
 		docView.setPageListener((page, total) -> {
@@ -491,50 +522,190 @@ public class DocumentActivity extends AppCompatActivity
 		input.requestFocus();
 	}
 
+	private void showBanner(String text) {
+		final TextView t = banner;
+		if (t == null)
+			return;
+		if (hideBannerTask != null)
+			t.removeCallbacks(hideBannerTask);
+		t.animate().cancel();
+		t.setText(text);
+		t.setAlpha(1f);
+		t.setVisibility(View.VISIBLE);
+		hideBannerTask = () -> t.animate().alpha(0f).setDuration(300)
+				.withEndAction(() -> t.setVisibility(View.GONE));
+		t.postDelayed(hideBannerTask, 3500);
+	}
+
+	/** Small right-pointing chevron; rotated 90 degrees when its chapter is expanded. */
+	private class ChevronView extends View {
+		private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+		private final Path path = new Path();
+
+		ChevronView(Context c) {
+			super(c);
+			paint.setStyle(Paint.Style.STROKE);
+			paint.setStrokeWidth(dp(2));
+			paint.setStrokeCap(Paint.Cap.ROUND);
+			paint.setStrokeJoin(Paint.Join.ROUND);
+			paint.setColor(0xFF616161);
+		}
+
+		@Override
+		protected void onDraw(Canvas canvas) {
+			float cx = getWidth() / 2f, cy = getHeight() / 2f, s = dp(5);
+			path.reset();
+			path.moveTo(cx - s * 0.6f, cy - s);
+			path.lineTo(cx + s * 0.6f, cy);
+			path.lineTo(cx - s * 0.6f, cy + s);
+			canvas.drawPath(path, paint);
+		}
+	}
+
+	/** Contents list: chapters with sub-sections that collapse and expand. */
+	private class OutlineAdapter extends BaseAdapter {
+		private final ArrayList<MuPDFCore.OutlineItem> items;
+		private final HashSet<Integer> collapsed = new HashSet<>();
+		private final ArrayList<Integer> visible = new ArrayList<>();
+		private final int currentIndex;   // entry for the page being read, or -1
+
+		OutlineAdapter(ArrayList<MuPDFCore.OutlineItem> items, int currentPage) {
+			this.items = items;
+
+			// start with every chapter that has sub-sections collapsed ...
+			for (int i = 0; i < items.size(); i++)
+				if (hasChildren(i))
+					collapsed.add(i);
+
+			// ... except the path leading to the section being read
+			int cur = -1;
+			for (int i = 0; i < items.size(); i++) {
+				int pg = items.get(i).page;
+				if (pg >= 0 && pg <= currentPage)
+					cur = i;
+			}
+			currentIndex = cur;
+			if (cur >= 0) {
+				int level = items.get(cur).level;
+				for (int j = cur - 1; j >= 0 && level > 0; j--) {
+					if (items.get(j).level < level) {
+						collapsed.remove(j);
+						level = items.get(j).level;
+					}
+				}
+			}
+			rebuild();
+		}
+
+		boolean hasChildren(int i) {
+			return i + 1 < items.size() && items.get(i + 1).level > items.get(i).level;
+		}
+
+		private void rebuild() {
+			visible.clear();
+			int skipLevel = -1;
+			for (int i = 0; i < items.size(); i++) {
+				MuPDFCore.OutlineItem it = items.get(i);
+				if (skipLevel >= 0 && it.level > skipLevel)
+					continue;
+				skipLevel = -1;
+				visible.add(i);
+				if (collapsed.contains(i))
+					skipLevel = it.level;
+			}
+		}
+
+		int visiblePositionOfCurrent() {
+			return currentIndex < 0 ? -1 : visible.indexOf(currentIndex);
+		}
+
+		MuPDFCore.OutlineItem itemAt(int position) {
+			return items.get(visible.get(position));
+		}
+
+		void toggleAt(int position) {
+			int idx = visible.get(position);
+			if (!hasChildren(idx))
+				return;
+			if (!collapsed.remove(idx))
+				collapsed.add(idx);
+			rebuild();
+			notifyDataSetChanged();
+		}
+
+		@Override public int getCount() { return visible.size(); }
+		@Override public Object getItem(int position) { return items.get(visible.get(position)); }
+		@Override public long getItemId(int position) { return visible.get(position); }
+
+		@Override
+		public View getView(final int position, View convertView, ViewGroup parent) {
+			final int idx = visible.get(position);
+			MuPDFCore.OutlineItem it = items.get(idx);
+			boolean children = hasChildren(idx);
+
+			LinearLayout row = new LinearLayout(DocumentActivity.this);
+			row.setOrientation(LinearLayout.HORIZONTAL);
+			row.setGravity(Gravity.CENTER_VERTICAL);
+			row.setPadding(dp(8 + Math.min(it.level, 6) * 20), dp(2), dp(16), dp(2));
+
+			if (children) {
+				ChevronView chev = new ChevronView(DocumentActivity.this);
+				chev.setRotation(collapsed.contains(idx) ? 0f : 90f);
+				chev.setOnClickListener(v -> toggleAt(position));
+				row.addView(chev, new LinearLayout.LayoutParams(dp(40), dp(44)));
+			} else {
+				row.addView(new View(DocumentActivity.this), new LinearLayout.LayoutParams(dp(40), dp(44)));
+			}
+
+			TextView title = new TextView(DocumentActivity.this);
+			title.setText(it.title);
+			title.setTextSize(it.level == 0 ? 16 : 15);
+			if (it.level == 0)
+				title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+			if (idx == currentIndex)
+				title.setTextColor(0xFF2E8B57);
+			else if (it.page < 0)
+				title.setTextColor(0xFF757575);
+			row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+			if (it.page >= 0) {
+				TextView pg = new TextView(DocumentActivity.this);
+				pg.setText(String.valueOf(it.page + 1));
+				pg.setTextSize(13);
+				pg.setTextColor(0xFF757575);
+				pg.setPadding(dp(12), 0, 0, 0);
+				row.addView(pg);
+			}
+			return row;
+		}
+	}
+
 	private void showOutlineDialog() {
 		if (outline == null || outline.isEmpty() || docView == null)
 			return;
-		final ArrayList<MuPDFCore.OutlineItem> items = outline;
-		ListView list = new ListView(this);
-		list.setAdapter(new ArrayAdapter<MuPDFCore.OutlineItem>(this, 0, items) {
-			@Override
-			public View getView(int position, View convertView, ViewGroup parent) {
-				MuPDFCore.OutlineItem it = getItem(position);
-				LinearLayout row = new LinearLayout(DocumentActivity.this);
-				row.setOrientation(LinearLayout.HORIZONTAL);
-				row.setGravity(Gravity.CENTER_VERTICAL);
-				row.setPadding(dp(20 + Math.min(it.level, 5) * 16), dp(12), dp(20), dp(12));
-				TextView title = new TextView(DocumentActivity.this);
-				title.setText(it.title);
-				title.setTextSize(15);
-				if (it.page < 0)
-					title.setTextColor(0xFF757575);
-				row.addView(title, new LinearLayout.LayoutParams(0,
-						ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-				if (it.page >= 0) {
-					TextView pg = new TextView(DocumentActivity.this);
-					pg.setText(String.valueOf(it.page + 1));
-					pg.setTextSize(13);
-					pg.setTextColor(0xFF757575);
-					pg.setPadding(dp(12), 0, 0, 0);
-					row.addView(pg);
-				}
-				return row;
-			}
-		});
+		final OutlineAdapter adapter = new OutlineAdapter(outline, docView.getCurrentPage());
+		final ListView list = new ListView(this);
+		list.setAdapter(adapter);
+
 		final AlertDialog dialog = new AlertDialog.Builder(this, R.style.MyDialog)
 				.setTitle(R.string.contents)
 				.setView(list)
 				.setNegativeButton(R.string.cancel, null)
 				.create();
 		list.setOnItemClickListener((p, v, pos, id) -> {
-			MuPDFCore.OutlineItem it = items.get(pos);
+			MuPDFCore.OutlineItem it = adapter.itemAt(pos);
 			if (it.page >= 0 && docView != null) {
 				docView.goToPage(it.page);
 				dialog.dismiss();
+			} else {
+				adapter.toggleAt(pos);   // a heading without a target just expands / collapses
 			}
 		});
 		dialog.show();
+
+		final int cur = adapter.visiblePositionOfCurrent();
+		if (cur >= 0)
+			list.post(() -> list.setSelectionFromTop(cur, dp(80)));
 	}
 
 	@Override

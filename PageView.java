@@ -23,6 +23,9 @@ import android.widget.ProgressBar;
 
 import androidx.core.content.res.ResourcesCompat;
 
+import java.util.ArrayList;
+import java.util.Collections;
+
 // Make our ImageViews opaque to optimize redraw
 class OpaqueImageView extends ImageView {
 
@@ -460,7 +463,9 @@ public class PageView extends ViewGroup {
 		}
 
 		Rect viewArea = new Rect(getLeft(),getTop(),getRight(),getBottom());
-		if (viewArea.width() == mSize.x || viewArea.height() == mSize.y) {
+		boolean noPatch = viewArea.width() == mSize.x || viewArea.height() == mSize.y
+				|| (viewArea.width() <= mSize.x && viewArea.height() <= mSize.y);   // zoomed out: base image is enough
+		if (noPatch) {
 			// If the viewArea's size matches the unzoomed size, there is no need for an hq patch
 			if (mPatch != null) {
 				mPatch.setImageBitmap(null);
@@ -574,6 +579,8 @@ public class PageView extends ViewGroup {
 		PointF mr = new PointF(q.lr_x, (q.lr_y + q.ur_y) / 2);
 		boolean sel = (!ur.equals(lr)) && q.contains(p.x, p.y);
 		if (sel) {
+			tsmodel.area = false;
+			tsmodel.areaText = null;
 			tsmodel.selectionBoxes = new Quad[1];
 			tsmodel.selectionBoxes[0] = q;
 			tsmodel.textHandles[0] = ll;
@@ -683,6 +690,8 @@ public class PageView extends ViewGroup {
 		PointF lr = new PointF(qs[qs.length - 1].lr_x, qs[qs.length - 1].lr_y);
 		PointF ml = new PointF(qs[0].ul_x, (qs[0].ul_y + qs[0].ll_y) / 2);
 		PointF mr = new PointF(qs[qs.length - 1].lr_x, (qs[qs.length - 1].lr_y + qs[qs.length - 1].ur_y) / 2);
+		tsmodel.area = false;
+		tsmodel.areaText = null;
 		tsmodel.selectionBoxes = qs;
 		tsmodel.textHandles[0] = ll;
 		tsmodel.textHandles[1]= lr;
@@ -694,9 +703,154 @@ public class PageView extends ViewGroup {
 			mSelectView.invalidate();
 	}
 
+	/* ---------------- area (rectangle) selection ---------------- */
+
+	private static class Seg {
+		float cy, x, h;
+		String text;
+	}
+
+	/**
+	 * Select every piece of text inside the rectangle (given in the parent's
+	 * coordinates), regardless of reading order. Each text line that crosses the
+	 * box contributes only the characters lying inside the box.
+	 * Returns false if the box contains no text on this page.
+	 */
+	public boolean selectArea(float x0, float y0, float x1, float y1) {
+		MuPDFCore.TextSelectionModel tsm = mCore.getTSModel(mPageNumber, true);
+		if (tsm == null || tsm.sText == null) return false;
+
+		PointF a = view2Src(Math.min(x0, x1), Math.min(y0, y1));
+		PointF b = view2Src(Math.max(x0, x1), Math.max(y0, y1));
+		float rx0 = a.x, ry0 = a.y, rx1 = b.x, ry1 = b.y;
+
+		// every text line of the page, as one quad per line
+		PointF tl = view2Src(getLeft() + 1, getTop() + 1);
+		PointF br = view2Src(getRight() - 1, getBottom() - 1);
+		Quad[] lines;
+		try {
+			lines = tsm.sText.highlight(new com.artifex.mupdf.fitz.Point(tl.x, tl.y),
+					new com.artifex.mupdf.fitz.Point(br.x, br.y));
+		} catch (Throwable t) {
+			lines = null;
+		}
+		if (lines == null || lines.length == 0) return false;
+
+		ArrayList<Quad> boxes = new ArrayList<>();
+		ArrayList<Seg> segs = new ArrayList<>();
+
+		for (Quad lq : lines) {
+			float lx0 = Math.min(Math.min(lq.ul_x, lq.ur_x), Math.min(lq.ll_x, lq.lr_x));
+			float lx1 = Math.max(Math.max(lq.ul_x, lq.ur_x), Math.max(lq.ll_x, lq.lr_x));
+			float ly0 = Math.min(Math.min(lq.ul_y, lq.ur_y), Math.min(lq.ll_y, lq.lr_y));
+			float ly1 = Math.max(Math.max(lq.ul_y, lq.ur_y), Math.max(lq.ll_y, lq.lr_y));
+			float lh = ly1 - ly0;
+			if (lh <= 0) continue;
+
+			// the box must cover a fair part of the line's height and overlap it sideways
+			float oy = Math.min(ly1, ry1) - Math.max(ly0, ry0);
+			float ox = Math.min(lx1, rx1) - Math.max(lx0, rx0);
+			if (oy < lh * 0.3f || ox <= 0) continue;
+
+			// the line's centre axis, from its left end A to its right end B
+			float ax = (lq.ul_x + lq.ll_x) / 2, ay = (lq.ul_y + lq.ll_y) / 2;
+			float bx = (lq.ur_x + lq.lr_x) / 2, by = (lq.ur_y + lq.lr_y) / 2;
+			float dx = bx - ax;
+
+			float t0 = 0, t1 = 1;
+			if (Math.abs(dx) > 0.001f) {
+				float ta = (rx0 - ax) / dx, tb = (rx1 - ax) / dx;
+				t0 = Math.max(0f, Math.min(ta, tb));
+				t1 = Math.min(1f, Math.max(ta, tb));
+			}
+			if (t1 <= t0 || (t1 - t0) * Math.abs(dx) < 1f) continue;
+
+			com.artifex.mupdf.fitz.Point pa = new com.artifex.mupdf.fitz.Point(ax + (bx - ax) * t0, ay + (by - ay) * t0);
+			com.artifex.mupdf.fitz.Point pb = new com.artifex.mupdf.fitz.Point(ax + (bx - ax) * t1, ay + (by - ay) * t1);
+
+			Quad[] part;
+			String text;
+			try {
+				part = tsm.sText.highlight(pa, pb);
+				text = tsm.sText.copy(pa, pb);
+			} catch (Throwable t) {
+				continue;
+			}
+			if (part == null || part.length == 0) continue;
+			for (Quad q : part) boxes.add(q);
+
+			if (text != null && text.trim().length() > 0) {
+				Seg sg = new Seg();
+				sg.cy = (ly0 + ly1) / 2;
+				sg.x = Math.min(pa.x, pb.x);
+				sg.h = lh;
+				sg.text = text.trim();
+				segs.add(sg);
+			}
+		}
+		if (boxes.isEmpty()) return false;
+
+		// build the text: rows top to bottom, items left to right within a row
+		Collections.sort(segs, (p, q) -> Float.compare(p.cy, q.cy));
+		StringBuilder sb = new StringBuilder();
+		int i = 0;
+		while (i < segs.size()) {
+			Seg first = segs.get(i);
+			ArrayList<Seg> row = new ArrayList<>();
+			row.add(first);
+			int j = i + 1;
+			while (j < segs.size() && Math.abs(segs.get(j).cy - first.cy) < first.h * 0.5f) {
+				row.add(segs.get(j));
+				j++;
+			}
+			Collections.sort(row, (p, q) -> Float.compare(p.x, q.x));
+			if (sb.length() > 0) sb.append('\n');
+			for (int k = 0; k < row.size(); k++) {
+				if (k > 0) sb.append(' ');
+				sb.append(row.get(k).text);
+			}
+			i = j;
+		}
+
+		Quad firstBox = boxes.get(0);
+		Quad lastBox = boxes.get(boxes.size() - 1);
+		tsm.selectionBoxes = boxes.toArray(new Quad[0]);
+		tsm.textHandles[0] = new PointF(firstBox.ll_x, firstBox.ll_y);
+		tsm.textHandles[1] = new PointF(lastBox.lr_x, lastBox.lr_y);
+		tsm.boundries[0] = new PointF(firstBox.ul_x, (firstBox.ul_y + firstBox.ll_y) / 2);
+		tsm.boundries[1] = new PointF(lastBox.lr_x, (lastBox.lr_y + lastBox.ur_y) / 2);
+		tsm.dir = 0;                 // no flow handles for an area selection
+		tsm.area = true;
+		tsm.areaText = sb.toString();
+		mCore.putTSModel(mPageNumber, tsm);
+		if (mSelectView != null)
+			mSelectView.invalidate();
+		return true;
+	}
+
+	/** Bounds (in the parent's coordinates) of this page's area selection, or null. */
+	public Rect getAreaRect() {
+		MuPDFCore.TextSelectionModel m = mCore.getTSModel(mPageNumber);
+		if (m == null || !m.area || m.selectionBoxes == null || m.selectionBoxes.length == 0)
+			return null;
+		float l = Float.MAX_VALUE, t = Float.MAX_VALUE, r = -Float.MAX_VALUE, b = -Float.MAX_VALUE;
+		for (Quad q : m.selectionBoxes) {
+			com.artifex.mupdf.fitz.Rect fr = q.toRect();
+			PointF p0 = src2View2(fr.x0, fr.y0);
+			PointF p1 = src2View2(fr.x1, fr.y1);
+			l = Math.min(l, Math.min(p0.x, p1.x));
+			t = Math.min(t, Math.min(p0.y, p1.y));
+			r = Math.max(r, Math.max(p0.x, p1.x));
+			b = Math.max(b, Math.max(p0.y, p1.y));
+		}
+		return new Rect((int) l, (int) t, (int) r, (int) b);
+	}
+
 	public String copy(int position) {
 		MuPDFCore.TextSelectionModel tsmodel = mCore.getTSModel(position);
 		if (tsmodel == null) return "";
+		if (tsmodel.area)
+			return tsmodel.areaText != null ? tsmodel.areaText : "";
 		PointF p1 = tsmodel.boundries[0];
 		PointF p2 = tsmodel.boundries[1];
 		com.artifex.mupdf.fitz.Point fp1 = new com.artifex.mupdf.fitz.Point(p1.x, p1.y);

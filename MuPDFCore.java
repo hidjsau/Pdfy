@@ -241,6 +241,8 @@ public class MuPDFCore
 		public PointF[]  textHandles = new PointF[2];       // handles point on source
 		public PointF[]  boundries= new PointF[2];          // boundries point on source
 		public int       dir;               // 0: none, 1: left, 2: right, 3: both
+		public boolean   area;              // true for a rectangular (area) selection
+		public String    areaText;          // text picked by the area selection
 		public android.graphics.Rect[]    rectHandles = new android.graphics.Rect[2];      // handles rect on view
 	}
 }

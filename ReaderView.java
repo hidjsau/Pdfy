@@ -7,6 +7,8 @@ import android.content.ClipboardManager;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Build;
@@ -44,7 +46,7 @@ public class ReaderView
 	private static final int FLING_MARGIN      = 100;
 	private static final int GAP               = 0;
 
-	private static final float MIN_SCALE        = 1.0f;
+	private static final float MIN_SCALE        = 0.35f;   // below 1 = zoomed out past the screen width
 	private static final float MAX_SCALE        = 64.0f;
 
 	private static final int MOVE_DELAY         = 100;
@@ -94,7 +96,10 @@ public class ReaderView
 	private final OnBackPressedCallback mBackCallback = new OnBackPressedCallback(false) {
 		@Override
 		public void handleOnBackPressed() {
-			endSelect();
+			if (mSelecting != SELECT.NO_SELECT)
+				endSelect();
+			else if (mAreaMode)
+				setAreaMode(false);
 		}
 	};
 	private boolean       mLongPress = false;               // as longpress
@@ -108,6 +113,18 @@ public class ReaderView
 	}
 	private PageListener  mPageListener;
 	private int           mReportedPage = -1;
+
+	/** Tells the host when the area selection tool is switched on or off. */
+	public interface AreaModeListener {
+		void onAreaModeChanged(boolean active);
+	}
+	private AreaModeListener mAreaListener;
+	private boolean       mAreaMode = false;       // area selection tool active
+	private boolean       mAreaDrawing = false;    // a box is being dragged
+	private boolean       mAreaSelected = false;   // an area selection is showing
+	private float         mAreaX0, mAreaY0, mAreaX1, mAreaY1;
+	private final Paint   mAreaFill = new Paint();
+	private final Paint   mAreaStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
 
 	public ReaderView(Context context) {
 		super(context);
@@ -128,6 +145,20 @@ public class ReaderView
 	{
 		mGestureDetector = new GestureDetector(context, this);
 		mGestureDetector.setIsLongpressEnabled(false);
+		// double tap switches the area selection tool on / off
+		mGestureDetector.setOnDoubleTapListener(new GestureDetector.OnDoubleTapListener() {
+			public boolean onSingleTapConfirmed(MotionEvent e) { return false; }
+			public boolean onDoubleTap(MotionEvent e) {
+				setAreaMode(!mAreaMode);
+				return true;
+			}
+			public boolean onDoubleTapEvent(MotionEvent e) { return false; }
+		});
+		float density = context.getResources().getDisplayMetrics().density;
+		mAreaFill.setColor(0x302196F3);
+		mAreaStroke.setColor(0xFF2196F3);
+		mAreaStroke.setStyle(Paint.Style.STROKE);
+		mAreaStroke.setStrokeWidth(2 * density);
 		mScaleGestureDetector = new ScaleGestureDetector(context, this);
 		mScroller = new Scroller(context);
 		mStepper = new Stepper(this, this);
@@ -370,6 +401,112 @@ public class ReaderView
 		mStepper.prod();
 	}
 
+	public void setAreaModeListener(AreaModeListener l) {
+		mAreaListener = l;
+	}
+
+	public boolean isAreaMode() {
+		return mAreaMode;
+	}
+
+	public void setAreaMode(boolean on) {
+		if (mAreaMode == on)
+			return;
+		endSelect();
+		mAreaMode = on;
+		mAreaDrawing = false;
+		mLongPress = false;
+		mBackCallback.setEnabled(on);
+		if (mAreaListener != null)
+			mAreaListener.onAreaModeChanged(on);
+		invalidate();
+	}
+
+	private void handleAreaEvent(MotionEvent e) {
+		switch (e.getActionMasked()) {
+		case MotionEvent.ACTION_DOWN:
+			if (mSelecting != SELECT.NO_SELECT)
+				endSelect();
+			mAreaX0 = mAreaX1 = e.getX();
+			mAreaY0 = mAreaY1 = e.getY();
+			mAreaDrawing = true;
+			break;
+		case MotionEvent.ACTION_MOVE:
+			if (mAreaDrawing) {
+				if (e.getPointerCount() == 1 && !mScaling) {
+					mAreaX1 = e.getX();
+					mAreaY1 = e.getY();
+				} else {
+					mAreaDrawing = false;   // a second finger means pinch / pan
+				}
+				invalidate();
+			}
+			break;
+		case MotionEvent.ACTION_POINTER_DOWN:
+			if (mAreaDrawing) {
+				mAreaDrawing = false;
+				invalidate();
+			}
+			break;
+		case MotionEvent.ACTION_UP:
+			if (mAreaDrawing) {
+				mAreaDrawing = false;
+				float slop = 2 * ViewConfiguration.get(getContext()).getScaledTouchSlop();
+				if (Math.max(Math.abs(mAreaX1 - mAreaX0), Math.abs(mAreaY1 - mAreaY0)) > slop)
+					applyAreaSelection();
+				invalidate();
+			}
+			break;
+		case MotionEvent.ACTION_CANCEL:
+			mAreaDrawing = false;
+			invalidate();
+			break;
+		}
+	}
+
+	/** Select the text inside the dragged box on every page it touches. */
+	private void applyAreaSelection() {
+		float l = Math.min(mAreaX0, mAreaX1), r = Math.max(mAreaX0, mAreaX1);
+		float t = Math.min(mAreaY0, mAreaY1), b = Math.max(mAreaY0, mAreaY1);
+
+		endSelect();
+		int minKey = Integer.MAX_VALUE, maxKey = -1;
+		for (int i = 0; i < mChildViews.size(); i++) {
+			PageView pv = (PageView) mChildViews.valueAt(i);
+			if (r < pv.getLeft() || l > pv.getRight() || b < pv.getTop() || t > pv.getBottom())
+				continue;
+			if (pv.selectArea(l, t, r, b)) {
+				int key = mChildViews.keyAt(i);
+				minKey = Math.min(minKey, key);
+				maxKey = Math.max(maxKey, key);
+			}
+		}
+		if (maxKey < 0) {
+			Tool.toast(Tool.getResourceString(R.string.area_no_text));
+			return;
+		}
+
+		mSelectLeftView = minKey;
+		mSelectRightView = maxKey;
+		mSelecting = SELECT.SELECTING;
+		mAreaSelected = true;
+		mBackCallback.setEnabled(true);
+		mTextActionMode = startActionMode(actionModeCallback, ActionMode.TYPE_FLOATING);
+		mActionModeVisible = false;
+		showFloatingToolbar();
+	}
+
+	@Override
+	protected void dispatchDraw(Canvas canvas) {
+		super.dispatchDraw(canvas);
+		if (mAreaDrawing) {
+			float l = Math.min(mAreaX0, mAreaX1), r = Math.max(mAreaX0, mAreaX1);
+			float t = Math.min(mAreaY0, mAreaY1), b = Math.max(mAreaY0, mAreaY1);
+			canvas.drawRect(l, t, r, b, mAreaFill);
+			canvas.drawRect(l, t, r, b, mAreaStroke);
+		}
+	}
+
 	public void run() {
 		if (!mScroller.isFinished()) {
 			mScroller.computeScrollOffset();
@@ -409,7 +546,10 @@ public class ReaderView
 				}
 			};
 		}
-		if (mSelecting == SELECT.NO_SELECT) {
+		if (mAreaMode) {
+			// area mode: touches draw a box, no long-press word selection
+		}
+		else if (mSelecting == SELECT.NO_SELECT) {
 			removeCallbacks(mLongPressRunnable);
 			mLongPress = true;
 			mLongPressEvent = e;
@@ -532,10 +672,12 @@ public class ReaderView
 		StringBuffer buffer = new StringBuffer("");
 
 		for (int i = mSelectLeftView; i <= mSelectRightView; i++) {
-			if (i > mSelectLeftView) {
+			String t = pv.copy(i);
+			if (t.length() == 0)
+				continue;
+			if (buffer.length() > 0)
 				buffer.append("\n");
-			}
-			buffer.append(pv.copy(i));
+			buffer.append(t);
 		}
 		return buffer.toString();
 	}
@@ -562,7 +704,8 @@ public class ReaderView
 			mTextActionMode.finish();
 			mTextActionMode = null;
 		}
-		mBackCallback.setEnabled(false);
+		mBackCallback.setEnabled(mAreaMode);
+		mAreaSelected = false;
 		mSelecting = SELECT.NO_SELECT;
 	}
 
@@ -613,6 +756,17 @@ public class ReaderView
 	}
 
 	public Rect getSelectionRect() {
+		if (mAreaSelected) {
+			Rect u = null;
+			for (int k = mSelectLeftView; k <= mSelectRightView; k++) {
+				PageView apv = (PageView) mChildViews.get(k);
+				Rect r = apv != null ? apv.getAreaRect() : null;
+				if (r == null) continue;
+				if (u == null) u = new Rect(r); else u.union(r);
+			}
+			if (u != null)
+				return u;
+		}
 		int i = 0;
 		if (mCurrent >= mSelectLeftView && mCurrent <= mSelectRightView) {
 			i = mCurrent;
@@ -695,7 +849,7 @@ public class ReaderView
 
 	public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX,
 			float velocityY) {
-		if (mScaling)
+		if (mScaling || mAreaMode)
 			return true;
 
 		if (mLongPress)
@@ -743,6 +897,8 @@ public class ReaderView
 			float distanceY) {
 		if (mLongPress)
 			mLongPress = false;
+		if (mAreaMode)
+			return true;   // one finger draws a box; two fingers pan / zoom through the scale detector
 		if (mSelecting == SELECT.MOVE_LEFT || mSelecting == SELECT.MOVE_RIGHT) {
 			moveSelect(e2.getX(), e2.getY());
 			if (mMagnifier != null) {
@@ -825,6 +981,8 @@ public class ReaderView
 		updateFloatingToolbarVisibility(event);
 		mScaleGestureDetector.onTouchEvent(event);
 		mGestureDetector.onTouchEvent(event);
+		if (mAreaMode)
+			handleAreaEvent(event);
 
 		if ((event.getAction() & MotionEvent.ACTION_MASK) == MotionEvent.ACTION_DOWN) {
 			mUserInteracting = true;

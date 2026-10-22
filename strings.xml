@@ -19,4 +19,7 @@
 	<string name="page_of">Page %1$d of %2$d</string>
 	<string name="remove_recent">Remove from recent files?</string>
 	<string name="remove">Remove</string>
+	<string name="area_on">Area selection tool activated. Drag to draw a box around the text. Double-tap to turn it off.</string>
+	<string name="area_off">Area selection tool turned off</string>
+	<string name="area_no_text">No text found inside the box</string>
 </resources>
