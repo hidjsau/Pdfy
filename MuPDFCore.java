@@ -223,6 +223,54 @@ public class MuPDFCore
 		return tsmodel;
 	}
 
+	/* ---- "select multiple": selections kept while more are added ---- */
+
+	public static class MultiItem {
+		public int page;
+		public Quad[] boxes;
+		public String text;
+	}
+
+	private final ArrayList<MultiItem> multi = new ArrayList<>();
+
+	/** Keep the page's current selection. Returns false if there is nothing new to keep. */
+	public boolean commitSelection(int page, String text) {
+		TextSelectionModel m = tsModel.get(page);
+		if (m == null || m.selectionBoxes == null || m.selectionBoxes.length == 0 || text == null || text.length() == 0)
+			return false;
+		for (MultiItem it : multi)
+			if (it.page == page && it.text.equals(text))
+				return false;
+		MultiItem it = new MultiItem();
+		it.page = page;
+		it.boxes = m.selectionBoxes.clone();
+		it.text = text;
+		multi.add(it);
+		return true;
+	}
+
+	public List<MultiItem> getMulti() {
+		return multi;
+	}
+
+	public int multiCount() {
+		return multi.size();
+	}
+
+	public void clearMulti() {
+		multi.clear();
+	}
+
+	/** Kept selections in the order they were made, one per line. */
+	public String multiText() {
+		StringBuilder sb = new StringBuilder();
+		for (MultiItem it : multi) {
+			if (sb.length() > 0) sb.append('\n');
+			sb.append(it.text);
+		}
+		return sb.toString();
+	}
+
 	public void putTSModel(int pageNum, TextSelectionModel tsmodel) {
 		tsModel.put(pageNum, tsmodel);
 	}

@@ -20,6 +20,7 @@ import java.util.Objects;
 
 public class TextActionModeCallback extends ActionMode.Callback2 {
     private static final int ACTION_MODE_MENU_ITEM_ORDER_COPY = 5;
+    private static final int ACTION_MODE_MENU_ITEM_ORDER_MULTIPLE = 6;
     private static final int ACTION_MODE_MENU_ITEM_ORDER_SHARE = 7;
     private static final int ACTION_MODE_MENU_ITEM_ORDER_SELECT_ALL = 8;
     private static final int ACTION_MODE_MENU_ITEM_ORDER_WEB_SEARCH= 20;
@@ -47,6 +48,8 @@ public class TextActionModeCallback extends ActionMode.Callback2 {
     private void populateMenuWithItems(Menu menu) {
         menu.add(Menu.NONE, android.R.id.copy, ACTION_MODE_MENU_ITEM_ORDER_COPY, android.R.string.copy)
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(Menu.NONE, ReaderView.MENU_SELECT_MULTIPLE, ACTION_MODE_MENU_ITEM_ORDER_MULTIPLE, Tool.getResourceString(R.string.select_multiple))
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         menu.add(Menu.NONE, android.R.id.shareText, ACTION_MODE_MENU_ITEM_ORDER_SHARE, Tool.getResourceString(R.string.share_text))
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         menu.add(Menu.NONE, android.R.id.selectAll, ACTION_MODE_MENU_ITEM_ORDER_SELECT_ALL, android.R.string.selectAll)
@@ -65,6 +68,9 @@ public class TextActionModeCallback extends ActionMode.Callback2 {
         case android.R.id.copy:
             mView.copy();
             break;
+        case ReaderView.MENU_SELECT_MULTIPLE:
+            mView.selectMultiple();
+            break;
         case android.R.id.shareText:
             mView.share();
             break;
@@ -73,7 +79,7 @@ public class TextActionModeCallback extends ActionMode.Callback2 {
             break;
         default:
             if (mProcessTextIntentActionsHandler.performMenuItemAction(item)) {
-                mView.endSelect();
+                mView.finishAll();
                 return true;
             }
             return false;

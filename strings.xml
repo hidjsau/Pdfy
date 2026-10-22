@@ -22,4 +22,9 @@
 	<string name="area_on">Area selection tool activated. Drag to draw a box around the text. Double-tap to turn it off.</string>
 	<string name="area_off">Area selection tool turned off</string>
 	<string name="area_no_text">No text found inside the box</string>
+	<string name="select_multiple">Select multiple</string>
+	<string name="copied">Copied</string>
+	<string name="copy">Copy</string>
+	<string name="clear">Clear</string>
+	<string name="multi_selected">%1$d selected</string>
 </resources>

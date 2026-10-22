@@ -19,6 +19,10 @@ public class PageAdapter extends BaseAdapter {
 		mCore = core;
 	}
 
+	public MuPDFCore getCore() {
+		return mCore;
+	}
+
 	public int getCount() {
 		return mCore.countPages();
 	}

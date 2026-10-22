@@ -66,6 +66,8 @@ public class DocumentActivity extends AppCompatActivity
 	private TextView pageIndicator;
 	private TextView contentsButton;
 	private TextView banner;
+	private LinearLayout multiBar;
+	private TextView multiCount;
 	private Runnable hideBannerTask;
 	private OnBackPressedCallback docBackCallback;
 
@@ -204,6 +206,8 @@ public class DocumentActivity extends AppCompatActivity
 		pageIndicator = null;
 		contentsButton = null;
 		banner = null;
+		multiBar = null;
+		multiCount = null;
 		if (docView != null) {
 			docView.getBackCallback().remove();
 			docView = null;
@@ -416,15 +420,55 @@ public class DocumentActivity extends AppCompatActivity
 		FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(
 				ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
 				Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-		blp.bottomMargin = dp(64);
+		blp.bottomMargin = dp(112);
 		frame.addView(banner, blp);
+
+		// bar shown while "Select multiple" is holding selections: count, Copy, Clear
+		multiBar = new LinearLayout(this);
+		multiBar.setOrientation(LinearLayout.HORIZONTAL);
+		multiBar.setGravity(Gravity.CENTER_VERTICAL);
+		GradientDrawable mbg = new GradientDrawable();
+		mbg.setColor(0xE6202020);
+		mbg.setCornerRadius(dp(24));
+		multiBar.setBackground(mbg);
+		multiBar.setPadding(dp(16), dp(2), dp(4), dp(2));
+		multiBar.setVisibility(View.GONE);
+		multiCount = new TextView(this);
+		multiCount.setTextColor(Color.WHITE);
+		multiCount.setTextSize(14);
+		multiBar.addView(multiCount);
+		TextView copyBtn = new TextView(this);
+		copyBtn.setText(R.string.copy);
+		copyBtn.setTextColor(0xFF7CE0A5);
+		copyBtn.setTextSize(14);
+		copyBtn.setTypeface(copyBtn.getTypeface(), android.graphics.Typeface.BOLD);
+		copyBtn.setPadding(dp(16), dp(10), dp(12), dp(10));
+		copyBtn.setOnClickListener(v -> { if (docView != null) docView.copy(); });
+		multiBar.addView(copyBtn);
+		TextView clearBtn = new TextView(this);
+		clearBtn.setText(R.string.clear);
+		clearBtn.setTextColor(0xFFCCCCCC);
+		clearBtn.setTextSize(14);
+		clearBtn.setPadding(dp(12), dp(10), dp(14), dp(10));
+		clearBtn.setOnClickListener(v -> { if (docView != null) docView.clearMulti(); });
+		multiBar.addView(clearBtn);
+		FrameLayout.LayoutParams mlp = new FrameLayout.LayoutParams(
+				ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+				Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+		mlp.bottomMargin = dp(60);
+		frame.addView(multiBar, mlp);
 
 		ViewCompat.setOnApplyWindowInsetsListener(frame, (v, insets) -> {
 			Insets b = insets.getInsets(WindowInsetsCompat.Type.systemBars());
 			if (banner != null) {
 				FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) banner.getLayoutParams();
-				lp.bottomMargin = b.bottom + dp(64);
+				lp.bottomMargin = b.bottom + dp(112);
 				banner.setLayoutParams(lp);
+			}
+			if (multiBar != null) {
+				FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) multiBar.getLayoutParams();
+				lp.bottomMargin = b.bottom + dp(60);
+				multiBar.setLayoutParams(lp);
 			}
 			if (pageIndicator != null) {
 				FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) pageIndicator.getLayoutParams();
@@ -444,6 +488,17 @@ public class DocumentActivity extends AppCompatActivity
 			showBanner(getString(active ? R.string.area_on : R.string.area_off));
 			if (pageIndicator != null)   // green page pill = area tool is on
 				((GradientDrawable) pageIndicator.getBackground()).setColor(active ? 0xE63CB371 : 0xB3000000);
+		});
+
+		docView.setMultiListener(count -> {
+			if (multiBar == null)
+				return;
+			if (count > 0) {
+				multiCount.setText(String.format(Locale.ROOT, getString(R.string.multi_selected), count));
+				multiBar.setVisibility(View.VISIBLE);
+			} else {
+				multiBar.setVisibility(View.GONE);
+			}
 		});
 
 		docView.setPageListener((page, total) -> {

@@ -279,6 +279,16 @@ public class PageView extends ViewGroup {
 
 					final Paint paint = new Paint();
 
+					// selections kept with "Select multiple"
+					if (!mIsBlank) {
+						paint.setColor(Tool.SELECTION_COLOR);
+						for (MuPDFCore.MultiItem it : mCore.getMulti()) {
+							if (it.page != mPageNumber) continue;
+							for (Quad q : it.boxes)
+								drawRect(q.toRect(), canvas, paint);
+						}
+					}
+
 					MuPDFCore.TextSelectionModel tsmodel = mCore.getTSModel(mPageNumber);
 					if (!mIsBlank && tsmodel != null && tsmodel.selectionBoxes != null && tsmodel.selectionBoxes.length > 0) {
 						paint.setColor(Tool.SELECTION_COLOR);
@@ -863,6 +873,12 @@ public class PageView extends ViewGroup {
 		PointF p1 = src2View2(tsmodel.boundries[0].x, tsmodel.boundries[0].y - (tsmodel.textHandles[0].y - tsmodel.boundries[0].y) * 2);
 		PointF p2 = src2View2(tsmodel.boundries[1].x, tsmodel.boundries[1].y + (tsmodel.textHandles[1].y - tsmodel.boundries[1].y) * 2);
 		return new Rect((int)p1.x, (int)p1.y, (int)p2.x, (int)p2.y);
+	}
+
+	/** Redraw the selection overlay (used when kept selections change). */
+	public void refreshSelection() {
+		if (mSelectView != null)
+			mSelectView.invalidate();
 	}
 
 	public void unSelect() {

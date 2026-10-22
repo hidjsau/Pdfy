@@ -44,7 +44,7 @@ public class ReaderView
 	private static final int MOVING_DOWN       = 4;
 
 	private static final int FLING_MARGIN      = 100;
-	private static final int GAP               = 0;
+	private static final int GAP               = 12;   // visible gap between pages on the dark background
 
 	private static final float MIN_SCALE        = 0.35f;   // below 1 = zoomed out past the screen width
 	private static final float MAX_SCALE        = 64.0f;
@@ -98,6 +98,8 @@ public class ReaderView
 		public void handleOnBackPressed() {
 			if (mSelecting != SELECT.NO_SELECT)
 				endSelect();
+			else if (hasMulti())
+				clearMulti();
 			else if (mAreaMode)
 				setAreaMode(false);
 		}
@@ -123,6 +125,15 @@ public class ReaderView
 	private boolean       mAreaDrawing = false;    // a box is being dragged
 	private boolean       mAreaSelected = false;   // an area selection is showing
 	private float         mAreaX0, mAreaY0, mAreaX1, mAreaY1;
+	/** Colour of the area around and between pages (dark grey; use 0xFF000000 for pure black). */
+	private static final int BACKGROUND_COLOR = 0xFF2E2E2E;
+	public static final int MENU_SELECT_MULTIPLE = 0x5E1;
+
+	/** Tells the host how many selections are being kept by "Select multiple". */
+	public interface MultiListener {
+		void onMultiSelectChanged(int count);
+	}
+	private MultiListener mMultiListener;
 	private final Paint   mAreaFill = new Paint();
 	private final Paint   mAreaStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -154,6 +165,7 @@ public class ReaderView
 			}
 			public boolean onDoubleTapEvent(MotionEvent e) { return false; }
 		});
+		setBackgroundColor(BACKGROUND_COLOR);
 		float density = context.getResources().getDisplayMetrics().density;
 		mAreaFill.setColor(0x302196F3);
 		mAreaStroke.setColor(0xFF2196F3);
@@ -401,6 +413,54 @@ public class ReaderView
 		mStepper.prod();
 	}
 
+	public void setMultiListener(MultiListener l) {
+		mMultiListener = l;
+	}
+
+	private boolean hasMulti() {
+		return mAdapter != null && mAdapter.getCore().multiCount() > 0;
+	}
+
+	/** Back is only intercepted while there is something to cancel. */
+	private void updateBack() {
+		mBackCallback.setEnabled(mAreaMode || hasMulti() || mSelecting != SELECT.NO_SELECT);
+	}
+
+	private void multiChanged() {
+		for (int i = 0; i < mChildViews.size(); i++)
+			((PageView) mChildViews.valueAt(i)).refreshSelection();
+		updateBack();
+		if (mMultiListener != null)
+			mMultiListener.onMultiSelectChanged(mAdapter != null ? mAdapter.getCore().multiCount() : 0);
+	}
+
+	/** Keep the current selection highlighted and let the person select more. */
+	public void selectMultiple() {
+		if (mSelecting == SELECT.NO_SELECT || mAdapter == null)
+			return;
+		PageView pv = getDisplayedView();
+		if (pv != null) {
+			for (int i = mSelectLeftView; i <= mSelectRightView; i++)
+				mAdapter.getCore().commitSelection(i, pv.copy(i));
+		}
+		endSelect();      // removes the active selection and its toolbar; kept ones stay drawn
+		multiChanged();
+	}
+
+	/** Drop all kept selections. */
+	public void clearMulti() {
+		if (mAdapter == null)
+			return;
+		mAdapter.getCore().clearMulti();
+		multiChanged();
+	}
+
+	/** End everything: the active selection and all kept ones. */
+	public void finishAll() {
+		clearMulti();
+		endSelect();
+	}
+
 	public void setAreaModeListener(AreaModeListener l) {
 		mAreaListener = l;
 	}
@@ -416,7 +476,7 @@ public class ReaderView
 		mAreaMode = on;
 		mAreaDrawing = false;
 		mLongPress = false;
-		mBackCallback.setEnabled(on);
+		updateBack();
 		if (mAreaListener != null)
 			mAreaListener.onAreaModeChanged(on);
 		invalidate();
@@ -665,19 +725,20 @@ public class ReaderView
 	}
 
 	public String getSelectedText() {
-		if (mSelecting == SELECT.NO_SELECT) return "";
+		StringBuffer buffer = new StringBuffer("");
+		if (mAdapter != null)
+			buffer.append(mAdapter.getCore().multiText());
 
 		PageView pv = getDisplayedView();
-		if (pv == null) return "";
-		StringBuffer buffer = new StringBuffer("");
-
-		for (int i = mSelectLeftView; i <= mSelectRightView; i++) {
-			String t = pv.copy(i);
-			if (t.length() == 0)
-				continue;
-			if (buffer.length() > 0)
-				buffer.append("\n");
-			buffer.append(t);
+		if (mSelecting != SELECT.NO_SELECT && pv != null) {
+			for (int i = mSelectLeftView; i <= mSelectRightView; i++) {
+				String t = pv.copy(i);
+				if (t.length() == 0)
+					continue;
+				if (buffer.length() > 0)
+					buffer.append("\n");
+				buffer.append(t);
+			}
 		}
 		return buffer.toString();
 	}
@@ -685,7 +746,9 @@ public class ReaderView
 	public void copy() {
 		ClipboardManager cm = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
 		cm.setPrimaryClip(ClipData.newPlainText(null, getSelectedText()));
-		endSelect();
+		if (Build.VERSION.SDK_INT < 33)   // newer Android shows its own "copied" notice
+			Tool.toast(Tool.getResourceString(R.string.copied));
+		finishAll();
 	}
 
 	public void endSelect() {
@@ -704,9 +767,9 @@ public class ReaderView
 			mTextActionMode.finish();
 			mTextActionMode = null;
 		}
-		mBackCallback.setEnabled(mAreaMode);
 		mAreaSelected = false;
 		mSelecting = SELECT.NO_SELECT;
+		updateBack();
 	}
 
 	public void share() {
@@ -715,7 +778,7 @@ public class ReaderView
 		intent.setType("text/plain");
 		intent.putExtra(Intent.EXTRA_TEXT, getSelectedText());
 		getContext().startActivity(Intent.createChooser(intent, Tool.getResourceString(R.string.sharing_text)));
-		endSelect();
+		finishAll();
 	}
 
 	public void selectAll() {
