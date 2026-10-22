@@ -490,11 +490,11 @@ public class DocumentActivity extends AppCompatActivity
 				((GradientDrawable) pageIndicator.getBackground()).setColor(active ? 0xE63CB371 : 0xB3000000);
 		});
 
-		docView.setMultiListener(count -> {
+		docView.setMultiListener(kept -> {
 			if (multiBar == null)
 				return;
-			if (count > 0) {
-				multiCount.setText(String.format(Locale.ROOT, getString(R.string.multi_selected), count));
+			if (kept > 0) {
+				multiCount.setText(String.format(Locale.ROOT, getString(R.string.multi_selected), kept));
 				multiBar.setVisibility(View.VISIBLE);
 			} else {
 				multiBar.setVisibility(View.GONE);
