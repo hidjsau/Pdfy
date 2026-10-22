@@ -3,6 +3,8 @@ package net.timelegend.chaka.viewer;
 import com.artifex.mupdf.fitz.Cookie;
 import com.artifex.mupdf.fitz.DisplayList;
 import com.artifex.mupdf.fitz.Document;
+import com.artifex.mupdf.fitz.Location;
+import com.artifex.mupdf.fitz.Outline;
 import com.artifex.mupdf.fitz.Matrix;
 import com.artifex.mupdf.fitz.Page;
 import com.artifex.mupdf.fitz.Quad;
@@ -15,6 +17,9 @@ import com.artifex.mupdf.fitz.android.AndroidDrawDevice;
 import android.graphics.Bitmap;
 import android.graphics.PointF;
 import android.util.SparseArray;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * PDF engine wrapper: opens the document, renders pages to bitmaps
@@ -145,6 +150,54 @@ public class MuPDFCore
 			dev.close();
 		} finally {
 			if (dev != null) dev.destroy();
+		}
+	}
+
+	/* ---- table of contents ---- */
+
+	public static class OutlineItem {
+		public String title;
+		public int page;   // 0-based, -1 if the entry has no resolvable target
+		public int level;  // nesting depth, 0 = top level
+	}
+
+	/** Flattened table of contents (empty if the document has none). */
+	public synchronized ArrayList<OutlineItem> getOutline() {
+		ArrayList<OutlineItem> list = new ArrayList<>();
+		if (doc == null || pageCount <= 0)
+			return list;
+		try {
+			Outline[] top = doc.loadOutline();
+			if (top != null)
+				flattenOutline(top, 0, list);
+		} catch (Throwable t) {
+			Tool.e("outline: " + t);
+		}
+		return list;
+	}
+
+	private void flattenOutline(Outline[] items, int level, List<OutlineItem> out) {
+		for (Outline o : items) {
+			if (o == null)
+				continue;
+			OutlineItem it = new OutlineItem();
+			it.title = o.title != null ? o.title.trim() : "";
+			it.level = level;
+			it.page = -1;
+			try {
+				if (o.uri != null) {
+					Location loc = doc.resolveLink(o.uri);
+					it.page = doc.pageNumberFromLocation(loc);
+				}
+			} catch (Throwable t) {
+				it.page = -1;
+			}
+			if (it.page >= pageCount)
+				it.page = -1;
+			if (it.title.length() > 0)
+				out.add(it);
+			if (o.down != null)
+				flattenOutline(o.down, level + 1, out);
 		}
 	}
 

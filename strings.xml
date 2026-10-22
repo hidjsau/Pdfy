@@ -11,4 +11,12 @@
 	<string name="share_text">Share</string>
 	<string name="sharing_text">Sharing text</string>
 	<string name="web_search">Web search</string>
+	<string name="recent_files">Recent files</string>
+	<string name="go_to_page">Go to page</string>
+	<string name="go">Go</string>
+	<string name="contents">Contents</string>
+	<string name="page_range_hint">1 – %1$d</string>
+	<string name="page_of">Page %1$d of %2$d</string>
+	<string name="remove_recent">Remove from recent files?</string>
+	<string name="remove">Remove</string>
 </resources>

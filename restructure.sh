@@ -39,7 +39,7 @@ put AndroidManifest.xml $MAIN
 for f in \
   CancellableAsyncTask CancellableTaskDefinition ContentInputStream \
   DocumentActivity MuPDFCancellableTaskDefinition MuPDFCore PageAdapter \
-  PageView ReaderView Stepper TextActionModeCallback Tool
+  PageView ReaderView RecentFiles Stepper TextActionModeCallback Tool
 do
   put "$f.java" $JAVA
 done

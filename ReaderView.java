@@ -102,6 +102,13 @@ public class ReaderView
 	private Runnable      mLongPressRunnable;
 	private long          mMoveTime = 0L;
 
+	/** Notified (on the UI thread) whenever the current page changes. */
+	public interface PageListener {
+		void onPageChanged(int page, int pageCount);
+	}
+	private PageListener  mPageListener;
+	private int           mReportedPage = -1;
+
 	public ReaderView(Context context) {
 		super(context);
 		setup(context);
@@ -322,6 +329,45 @@ public class ReaderView
 
 	public PageView getDisplayedView() {
 		return (PageView) mChildViews.get(mCurrent);
+	}
+
+	/** 0-based index of the page currently shown. */
+	public int getCurrentPage() {
+		return mCurrent;
+	}
+
+	public void setPageListener(PageListener l) {
+		mPageListener = l;
+		mReportedPage = -1;
+		requestLayout();
+	}
+
+	/** Jump to a 0-based page (clamped), showing it from its top-left corner. */
+	public void goToPage(int page) {
+		if (mAdapter == null)
+			return;
+		int count = mAdapter.getCount();
+		if (count <= 0)
+			return;
+		if (page < 0) page = 0;
+		if (page >= count) page = count - 1;
+
+		endSelect();
+		mScroller.forceFinished(true);
+		mXScroll = mYScroll = 0;
+		mResetLayout = false;
+
+		for (int i = 0; i < mChildViews.size(); i++) {
+			View v = mChildViews.valueAt(i);
+			onNotInUse(v);
+			mViewCache.add(v);
+			removeViewInLayout(v);
+		}
+		mChildViews.clear();
+
+		mCurrent = page;
+		requestLayout();
+		mStepper.prod();
 	}
 
 	public void run() {
@@ -956,6 +1002,17 @@ public class ReaderView
 
 		mXScroll = mYScroll = 0;
 		invalidate();
+
+		if (mPageListener != null && mCurrent != mReportedPage) {
+			mReportedPage = mCurrent;
+			final PageListener l = mPageListener;
+			final int page = mCurrent;
+			final int count = mAdapter.getCount();
+			// posted: the listener updates views, which must not happen mid-layout
+			post(new Runnable() {
+				public void run() { l.onPageChanged(page, count); }
+			});
+		}
 	}
 
 	// lay out the page above v
